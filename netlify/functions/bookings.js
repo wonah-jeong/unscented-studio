@@ -28,6 +28,18 @@ function fieldVal(v) {
   return v && typeof v === 'object' && 'name' in v ? v.name : v;
 }
 
+// 한국 시간 기준 오늘 날짜(YYYY-MM-DD). 이 값보다 이전 날짜의 예약은
+// 고객용 응답에서 제외한다 — 지난 예약은 매일 자동으로 화면에서 빠진다.
+function todayIsoKST() {
+  var parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Seoul',
+    year: 'numeric', month: '2-digit', day: '2-digit'
+  }).formatToParts(new Date());
+  var map = {};
+  for (var i = 0; i < parts.length; i++) map[parts[i].type] = parts[i].value;
+  return map.year + '-' + map.month + '-' + map.day;
+}
+
 async function fetchAllRecords(token) {
   var records = [];
   var offset;
@@ -58,6 +70,7 @@ export default async (req) => {
 
   try {
     const records = await fetchAllRecords(token);
+    const today = todayIsoKST();
     const out = { first: {}, second: {} };
     for (const rec of records) {
       const f = rec.fields || {};
@@ -65,6 +78,7 @@ export default async (req) => {
       const storeKey = storeName === '1호점' ? 'first' : storeName === '2호점' ? 'second' : null;
       const iso = f[F.date];
       if (!storeKey || !iso) continue;
+      if (iso < today) continue; // 지난 날짜는 매번 요청 시점 기준으로 자동 제외
       if (!out[storeKey][iso]) out[storeKey][iso] = [];
       out[storeKey][iso].push({
         start: f[F.start] || '',
