@@ -33,7 +33,7 @@ async function fetchAllRecords(token) {
   var offset;
   do {
     var url = 'https://api.airtable.com/v0/' + BASE_ID + '/' + TABLE_ID +
-      '?pageSize=100&fields[]=' + Object.values(F).join('&fields[]=') +
+      '?pageSize=100&returnFieldsByFieldId=true&fields[]=' + Object.values(F).join('&fields[]=') +
       (offset ? '&offset=' + offset : '');
     var res = await fetch(url, { headers: { Authorization: 'Bearer ' + token } });
     if (!res.ok) {
