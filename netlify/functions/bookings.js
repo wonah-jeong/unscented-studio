@@ -27,6 +27,17 @@ function fieldVal(v) {
   return v && typeof v === 'object' && 'name' in v ? v.name : v;
 }
 
+// 고객용 응답으로 나가는 이름은 항상 마스킹한다 — 첫 글자와 가운데 글자만 남기고 나머지는 '*'.
+// 원본 이름은 이 함수를 거치지 않고는 응답에 절대 포함되지 않는다.
+function maskName(name) {
+  var s = String(name || '');
+  var chars = Array.from(s);
+  var n = chars.length;
+  if (n <= 2) return s;
+  var midIdx = Math.floor(n / 2);
+  return chars.map(function (ch, i) { return (i === 0 || i === midIdx) ? ch : '*'; }).join('');
+}
+
 // 한국 시간 기준 오늘 날짜(YYYY-MM-DD). 이 값보다 이전 날짜의 예약은
 // 고객용 응답에서 제외한다 — 지난 예약은 매일 자동으로 화면에서 빠진다.
 function todayIsoKST() {
@@ -82,7 +93,7 @@ export default async (req) => {
       out[storeKey][iso].push({
         start: f[F.start] || '',
         end: f[F.end] || '',
-        name: f[F.name] || '',
+        name: maskName(f[F.name] || ''),
         phone4: f[F.phone4] || '',
         party: f[F.party] || ''
       });
