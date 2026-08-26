@@ -3,9 +3,9 @@
 // Reads the "예약" (booking) table directly from Airtable's REST API — this is a
 // separate, lightweight table that unscented-clone.html's admin panel keeps in sync
 // on every add/edit/delete, independent of whether a customer/payment record exists
-// for that booking. It only ever contains public-safe data: masked name, last-4
-// phone digits, party size, memo, store, date, start/end time. No business, contact,
-// or payment info lives here.
+// for that booking. It only ever returns public-safe data: name, last-4 phone
+// digits, party size, store, date, start/end time. Memo(특이사항) is admin-only and
+// is intentionally never requested from Airtable or included in this response.
 //
 // Requires one environment variable, set in the Netlify site's dashboard:
 //   AIRTABLE_TOKEN — a read-only Airtable Personal Access Token scoped to just this
@@ -20,8 +20,7 @@ const F = {
   end: 'fldqR7BGIvD8soGOT',
   name: 'fld4BtLHAfFOUbFrS',
   phone4: 'fldqnLZBMwfKmi8U1',
-  party: 'fldHA5JKS7ro9qHnL',
-  note: 'fldNrOzFfgvI2RdC7'
+  party: 'fldHA5JKS7ro9qHnL'
 };
 
 function fieldVal(v) {
@@ -85,8 +84,7 @@ export default async (req) => {
         end: f[F.end] || '',
         name: f[F.name] || '',
         phone4: f[F.phone4] || '',
-        party: f[F.party] || '',
-        note: f[F.note] || ''
+        party: f[F.party] || ''
       });
     }
     for (const storeKey of ['first', 'second']) {
