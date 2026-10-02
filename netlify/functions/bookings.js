@@ -50,6 +50,22 @@ function todayIsoKST() {
   return map.year + '-' + map.month + '-' + map.day;
 }
 
+// 종료시간 표기: 자정 종료는 "24:00", 다음날까지 이어지면 24를 더해 저장된다(예: 다음날 01:00 → "25:00").
+function timeToMin(t) {
+  var p = String(t || '').split(':');
+  var h = parseInt(p[0], 10), m = parseInt(p[1], 10);
+  return (isNaN(h) ? 0 : h * 60) + (isNaN(m) ? 0 : m);
+}
+function minToTime(mins) {
+  var h = Math.floor(mins / 60), m = mins % 60;
+  return (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m;
+}
+function nextIso(iso) {
+  var p = iso.split('-').map(Number);
+  var d = new Date(Date.UTC(p[0], p[1] - 1, p[2] + 1));
+  return d.toISOString().slice(0, 10);
+}
+
 async function fetchAllRecords(token) {
   var records = [];
   var offset;
@@ -88,15 +104,29 @@ export default async (req) => {
       const storeKey = storeName === '1호점' ? 'first' : storeName === '2호점' ? 'second' : null;
       const iso = f[F.date];
       if (!storeKey || !iso) continue;
-      if (iso < today) continue; // 지난 날짜는 매번 요청 시점 기준으로 자동 제외
-      if (!out[storeKey][iso]) out[storeKey][iso] = [];
-      out[storeKey][iso].push({
-        start: f[F.start] || '',
-        end: f[F.end] || '',
+      const base = {
         name: maskName(f[F.name] || ''),
         phone4: f[F.phone4] || '',
         party: f[F.party] || ''
-      });
+      };
+      const endMin = timeToMin(f[F.end]);
+      const overnight = endMin > 1440; // 다음날 새벽까지 이어지는 예약
+      // 시작한 날: "23:00-01:00"처럼 표시
+      if (iso >= today) { // 지난 날짜는 매번 요청 시점 기준으로 자동 제외
+        if (!out[storeKey][iso]) out[storeKey][iso] = [];
+        out[storeKey][iso].push(Object.assign({
+          start: f[F.start] || '',
+          end: overnight ? minToTime(endMin - 1440) : (f[F.end] || '')
+        }, base));
+      }
+      // 다음날: 새벽 시간도 예약된 시간으로 표시 ("00:00-01:00")
+      if (overnight) {
+        const next = nextIso(iso);
+        if (next >= today) {
+          if (!out[storeKey][next]) out[storeKey][next] = [];
+          out[storeKey][next].push(Object.assign({ start: '00:00', end: minToTime(endMin - 1440) }, base));
+        }
+      }
     }
     for (const storeKey of ['first', 'second']) {
       for (const iso of Object.keys(out[storeKey])) {
