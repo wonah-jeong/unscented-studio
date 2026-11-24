@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>관리자 · Unscented 렌탈스튜디오</title>
+<meta name="robots" content="noindex,nofollow">
+<meta name="theme-color" content="#3c3934">
+<link rel="stylesheet" href="/admin/admin.css">
+</head>
+<body>
+
+<div class="boot" id="boot">불러오는 중…</div>
+
+<!-- ============================ 로그인 ============================ -->
+<section class="login" id="loginView" hidden>
+  <form class="login-box" id="loginForm">
+    <img class="login-logo" src="/images/logo.png" alt="Unscented">
+    <h1>관리자 로그인</h1>
+    <p class="login-hint">비밀번호를 한 번 입력하면 30일 동안 다시 묻지 않아요.</p>
+    <input type="password" id="loginPassword" name="password" autocomplete="current-password" placeholder="관리자 비밀번호" required>
+    <button type="submit" id="loginBtn">들어가기</button>
+    <p class="login-msg" id="loginMsg" role="status"></p>
+  </form>
+</section>
+
+<!-- ============================ 본문 ============================ -->
+<div class="app" id="appView" hidden>
+  <header class="topbar">
+    <div class="brand">
+      <img src="/images/logo.png" alt="">
+      <span>관리자</span>
+    </div>
+    <nav class="tabs" id="tabs">
+      <button type="button" data-tab="bookings" class="active">예약</button>
+      <button type="button" data-tab="revenue">매출</button>
+      <button type="button" data-tab="data">데이터</button>
+    </nav>
+    <div class="top-actions">
+      <a href="/" target="_blank" rel="noopener">사이트</a>
+      <button type="button" id="logoutBtn">로그아웃</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- ---------------------------- 예약 ---------------------------- -->
+    <section class="panel active" id="tab-bookings">
+      <div class="store-switch" id="storeSwitch">
+        <button type="button" data-store="first" class="active">1호점</button>
+        <button type="button" data-store="second">2호점</button>
+      </div>
+
+      <div class="cal-bar">
+        <button type="button" id="calPrev" aria-label="이전 달">‹</button>
+        <span id="calLabel">-</span>
+        <button type="button" id="calNext" aria-label="다음 달">›</button>
+      </div>
+
+      <div class="cal-grid" id="calGrid"></div>
+      <p class="cal-hint">날짜를 누르면 예약을 추가·수정·삭제할 수 있어요. 자정을 넘는 예약은 다음날 칸에도 표시됩니다.</p>
+
+      <div class="quick-actions">
+        <button type="button" id="taxOpenBtn">세금계산서 CSV</button>
+        <button type="button" id="refreshBtn">새로고침</button>
+      </div>
+    </section>
+
+    <!-- ---------------------------- 매출 ---------------------------- -->
+    <section class="panel" id="tab-revenue">
+      <div class="month-bar">
+        <button type="button" id="revPrev" aria-label="이전 달">‹</button>
+        <span id="revMonthLabel">-</span>
+        <button type="button" id="revNext" aria-label="다음 달">›</button>
+      </div>
+      <div id="revStores"><div class="loading">불러오는 중…</div></div>
+
+      <div class="section-head">
+        <h2>이번 달 비용</h2>
+        <button type="button" class="mini" id="expAddBtn">+ 비용 추가</button>
+      </div>
+      <form class="exp-form" id="expForm">
+        <div class="row2">
+          <input type="date" id="expDate" required>
+          <input type="number" id="expAmount" placeholder="금액" min="0" step="1" required>
+        </div>
+        <div class="row2">
+          <input type="text" id="expItem" placeholder="항목명 (예: 임대료)" required>
+          <select id="expStore">
+            <option value="1호점">1호점</option>
+            <option value="2호점">2호점</option>
+            <option value="공통" selected>공통</option>
+          </select>
+        </div>
+        <input type="text" id="expNote" placeholder="메모 (선택)">
+        <button type="submit">저장</button>
+        <div class="form-status" id="expStatus"></div>
+      </form>
+      <div id="expArea"><div class="loading">불러오는 중…</div></div>
+      <div class="net" id="revNet"></div>
+
+      <div class="section-head"><h2>월별 매출 추이 (최근 12개월)</h2></div>
+      <div class="legend">
+        <span><i class="dot s1"></i>1호점</span>
+        <span><i class="dot s2"></i>2호점</span>
+      </div>
+      <div class="chart-wrap"><div id="revChart"><div class="loading">불러오는 중…</div></div></div>
+    </section>
+
+    <!-- ---------------------------- 데이터 ---------------------------- -->
+    <section class="panel" id="tab-data">
+      <div class="section-head"><h2>내보내기</h2></div>
+      <p class="desc">예약·고객·결제·지출을 CSV로 받아요. 엑셀에서 바로 열립니다.</p>
+      <div class="btn-grid">
+        <button type="button" data-export="bookings">예약 CSV</button>
+        <button type="button" data-export="customers">고객 CSV</button>
+        <button type="button" data-export="payments">결제 CSV</button>
+        <button type="button" data-export="expenses">지출 CSV</button>
+      </div>
+      <div class="form-status" id="exportStatus"></div>
+
+      <div class="section-head"><h2>가져오기</h2></div>
+      <p class="desc">
+        기존 Airtable에서 내려받은 CSV(예약/고객/결제/지출)를 그대로 올리면 됩니다.
+        첫 줄은 제목(헤더) 행이어야 하고, 예약·결제는 예약키가 같으면 새로 쌓이지 않고 갱신돼요.
+        같은 파일을 두 번 올려도 중복이 생기지 않습니다.
+      </p>
+      <div class="import-box">
+        <select id="importTable">
+          <option value="bookings">예약 CSV</option>
+          <option value="customers">고객 CSV</option>
+          <option value="payments">결제 CSV</option>
+          <option value="expenses">지출 CSV</option>
+        </select>
+        <input type="file" id="importFile" accept=".csv,text/csv,text/plain">
+        <button type="button" id="importBtn">가져오기</button>
+        <div class="form-status" id="importStatus"></div>
+        <pre class="import-result" id="importResult" hidden></pre>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- ======================= 하루 상세 모달 ======================= -->
+<div class="backdrop" id="dayModal">
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <div class="sheet-head">
+      <div class="day-nav">
+        <button type="button" id="dayPrev" aria-label="전날">‹</button>
+        <span class="sheet-title" id="modalTitle">-</span>
+        <button type="button" id="dayNext" aria-label="다음날">›</button>
+      </div>
+      <button type="button" class="close" id="modalClose" aria-label="닫기">×</button>
+    </div>
+    <p class="sheet-sub" id="modalSub"></p>
+    <div class="day-list" id="modalList"></div>
+    <div id="formWrap"></div>
+  </div>
+</div>
+
+<!-- ======================= 세금계산서 모달 ======================= -->
+<div class="backdrop" id="taxModal">
+  <div class="sheet" role="dialog" aria-modal="true">
+    <div class="sheet-head">
+      <span class="sheet-title">세금계산서 CSV</span>
+      <button type="button" class="close" id="taxModalClose" aria-label="닫기">×</button>
+    </div>
+    <p class="sheet-sub">기간을 고르면 그 기간 중 "세금계산서발행"으로 등록된 결제기록만 홈택스 업로드 양식(CSV)으로 받아요.</p>
+    <div class="tax-form">
+      <div class="row2">
+        <input type="date" id="taxFrom">
+        <span class="tilde">~</span>
+        <input type="date" id="taxTo">
+      </div>
+      <button type="button" id="taxRunBtn">CSV 다운로드</button>
+      <div class="form-status" id="taxStatus"></div>
+      <p class="desc">받은 파일의 1행(제목행)을 지우고 데이터만 복사해, 홈택스 업로드 양식의 7행부터 붙여넣어 사용하세요.</p>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status"></div>
+
+<script src="/admin/admin.js"></script>
+</body>
+</html>
