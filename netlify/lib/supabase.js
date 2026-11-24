@@ -145,7 +145,8 @@ export async function sbPatch(cfg, table, filters, patch) {
 }
 
 export async function sbDelete(cfg, table, filters) {
-  const pairs = filterPairs(filters, []);
+  // return=representation 으로 지운 행을 돌려받으려면 select 가 필요하다(없으면 204 + 빈 본문).
+  const pairs = filterPairs(filters, [['select', '*']]);
   return request(cfg, table, pairs, {
     method: 'DELETE',
     headers: { Prefer: 'return=representation' }

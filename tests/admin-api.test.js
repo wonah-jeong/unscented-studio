@@ -118,8 +118,8 @@ test('예약 삭제는 결제기록도 함께 지운다', async function () {
     assert.equal(body.deleted, 1);
     assert.equal(body.paymentDeleted, true);
     assert.equal(calls.length, 2);
-    assert.match(calls[0].url, /\/bookings\?book_key=eq\.r-abc/);
-    assert.match(calls[1].url, /\/payments\?pay_key=eq\.r-abc/);
+    assert.match(calls[0].url, /\/bookings\?.*book_key=eq\.r-abc/);
+    assert.match(calls[1].url, /\/payments\?.*pay_key=eq\.r-abc/);
   } finally {
     calls.restore();
     clearEnv();

@@ -1025,7 +1025,7 @@
           date: payload.date,
           start_time: payload.start_time,
           end_time: payload.end_time,
-          customer_id: state.selectedCustomer ? state.selectedCustomer.id : (existing && existing.customer_id) || null,
+          customer_id: state.selectedCustomer ? state.selectedCustomer.id : null,
           amount: amount,
           status: STATUS_LABEL[issueStatus] || '발행안함',
           biz_no: issueStatus === 'tax' ? bizNo : '',

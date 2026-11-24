@@ -81,7 +81,12 @@ function isHttps(req) {
   try {
     const proto = req.headers.get('x-forwarded-proto');
     if (proto) return String(proto).split(',')[0].trim() === 'https';
-    return true; // Netlify 배포 환경은 항상 https
+    // 로컬(netlify dev / http://localhost)에서는 Secure 쿠키가 저장되지 않으므로 URL 로 판단한다.
+    try {
+      return new URL(req.url).protocol === 'https:';
+    } catch (e) {
+      return true; // Netlify 배포 환경은 항상 https
+    }
   } catch (e) {
     return true;
   }
