@@ -373,6 +373,174 @@ test('가져오기: 잘못된 값은 줄 번호와 함께 건너뛴다', async f
   }
 });
 
+test('고객 CSV 대량 가져오기: 신규 250명은 200건씩 배치 insert (고객당 요청 없음)', async function () {
+  setEnv();
+  const inserts = [];
+  const calls = mockFetch(function (url, init) {
+    if (init && init.method === 'POST') {
+      const rows = JSON.parse(init.body);
+      inserts.push(rows);
+      return jsonRes(rows.map(function (r, i) {
+        return { id: 'new-' + inserts.length + '-' + i, name: r.name, phone: r.phone };
+      }));
+    }
+    return jsonRes([]);
+  });
+  try {
+    let csv = '이름,연락처\r\n';
+    for (let i = 1; i <= 250; i++) csv += '고객' + i + ',010-0000-' + String(1000 + i) + '\r\n';
+    const res = await call('resource=import&table=customers', { method: 'POST', body: { csv: csv } });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.total, 250);
+    assert.equal(body.inserted, 250);
+    assert.equal(body.updated, 0);
+    assert.equal(body.written, 250);
+    assert.equal(inserts.length, 2, '200건 한 요청, 남은 50건 한 요청');
+    assert.equal(inserts[0].length, 200);
+    assert.equal(inserts[1].length, 50);
+    assert.equal(calls.length, 3, '고객 목록 1회 + insert 2회 (행마다 요청하지 않는다)');
+    assert.equal(calls[0].method, 'GET');
+    assert.match(new URL(calls[0].url).searchParams.get('select'), /biz_name/, '수정 여부 판단에 쓸 칸까지 읽는다');
+  } finally {
+    calls.restore();
+    clearEnv();
+  }
+});
+
+test('고객 CSV: 파일 안 중복은 한 번만, 바뀐 값이 없는 기존 고객은 건너뛴다', async function () {
+  setEnv();
+  const existing = [
+    { id: 'c1', name: '김수', phone: '010-1111-2222', biz_no: '', biz_name: '', biz_owner: '', email: '', note: '' },
+    { id: 'c2', name: '박영희', phone: '010-3333-4444', biz_no: '', biz_name: '', biz_owner: '', email: 'old@x.com', note: '' }
+  ];
+  const calls = mockFetch(function (url, init) {
+    if (init && init.method === 'PATCH') return jsonRes([{}]);
+    if (init && init.method === 'POST') {
+      const rows = JSON.parse(init.body);
+      return jsonRes(rows.map(function (r) { return { id: 'new-1', name: r.name, phone: r.phone }; }));
+    }
+    return jsonRes(existing);
+  });
+  try {
+    const csv = '이름,연락처,이메일,메모\r\n' +
+      '김수,01011112222,,\r\n' +
+      '박영희,010-3333-4444,new@x.com,\r\n' +
+      '이철,010-5555-6666,철@x.com,첫 줄\r\n' +
+      '이철,01055556666,,둘째 줄\r\n';
+    const res = await call('resource=import&table=customers', { method: 'POST', body: { csv: csv } });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.total, 4);
+    assert.equal(body.inserted, 1, '이철 두 줄은 한 명으로 합쳐 저장');
+    assert.equal(body.updated, 1, '박영희만 이메일이 바뀌어 수정');
+    assert.equal(body.skipped, 2, '중복 1건 + 바뀐 값 없는 김수 1건');
+    assert.equal(body.written, 2);
+
+    const posts = calls.filter(function (c) { return c.method === 'POST'; });
+    const patches = calls.filter(function (c) { return c.method === 'PATCH'; });
+    assert.equal(posts.length, 1);
+    assert.equal(posts[0].method, 'POST');
+    const sent = JSON.parse(posts[0].body);
+    assert.equal(sent.length, 1);
+    assert.deepEqual(sent[0], {
+      name: '이철', phone: '01055556666', biz_no: '', biz_name: '', biz_owner: '',
+      email: '철@x.com', note: '둘째 줄'
+    }, '뒤에 나온 줄의 값이 있으면 그 값으로 채운다');
+
+    assert.equal(patches.length, 1);
+    const u = new URL(patches[0].url);
+    assert.ok(u.pathname.endsWith('/customers'));
+    assert.equal(u.searchParams.get('id'), 'eq.c2');
+    assert.deepEqual(JSON.parse(patches[0].body), { email: 'new@x.com' }, '바뀐 칸만 보낸다');
+  } finally {
+    calls.restore();
+    clearEnv();
+  }
+});
+
+test('고객 CSV: 기존 고객 수정은 15건씩만 동시에 보낸다', async function () {
+  setEnv();
+  const existing = [];
+  for (let i = 1; i <= 40; i++) {
+    existing.push({
+      id: 'c' + i, name: '고객' + i, phone: '010-0000-' + String(1000 + i),
+      biz_no: '', biz_name: '', biz_owner: '', email: 'old' + i + '@x.com', note: ''
+    });
+  }
+  let inFlight = 0;
+  let maxInFlight = 0;
+  const calls = mockFetch(async function (url, init) {
+    if (init && init.method === 'PATCH') {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise(function (r) { setTimeout(r, 5); });
+      inFlight -= 1;
+      return jsonRes([{}]);
+    }
+    return jsonRes(existing);
+  });
+  try {
+    let csv = '이름,연락처,이메일\r\n';
+    for (let i = 1; i <= 40; i++) csv += '고객' + i + ',010-0000-' + String(1000 + i) + ',new' + i + '@x.com\r\n';
+    const res = await call('resource=import&table=customers', { method: 'POST', body: { csv: csv } });
+    const body = await res.json();
+    assert.equal(body.updated, 40);
+    assert.equal(calls.filter(function (c) { return c.method === 'PATCH'; }).length, 40);
+    assert.ok(maxInFlight <= 15, '동시 요청은 15건을 넘지 않는다 (실제 ' + maxInFlight + ')');
+    assert.ok(maxInFlight > 1, '순차 1건씩 보내지 않는다');
+  } finally {
+    calls.restore();
+    clearEnv();
+  }
+});
+
+test('결제 CSV: 미등록 고객은 중복 없이 한 번에 등록하고 그 id 로 연결', async function () {
+  setEnv();
+  const existing = [{ id: 'c1', name: '김수', phone: '010-1111-2222', biz_no: '', biz_name: '', biz_owner: '', email: '', note: '' }];
+  const customerPosts = [];
+  const paymentPosts = [];
+  const calls = mockFetch(function (url, init) {
+    const u = new URL(url);
+    if (init && init.method === 'POST') {
+      const rows = JSON.parse(init.body);
+      if (u.pathname.endsWith('/customers')) {
+        customerPosts.push(rows);
+        return jsonRes(rows.map(function (r) {
+          return { id: r.phone === '010-7777-8888' ? 'new-a' : 'new-b', name: r.name, phone: r.phone };
+        }));
+      }
+      paymentPosts.push(rows);
+      return jsonRes(rows);
+    }
+    return jsonRes(existing);
+  });
+  try {
+    const csv = '예약키,매장,날짜,시작,종료,연결된고객,연락처(전체),금액,발행상태,입금완료\r\n' +
+      'r1,1호점,2026-11-24,10:00,12:00,김수,010-1111-2222,100000,현금영수증발행,Y\r\n' +
+      'r2,1호점,2026-11-25,10:00,12:00,이철,010-7777-8888,50000,발행안함,\r\n' +
+      'r3,2호점,2026-11-25,13:00,15:00,이철,01077778888,70000,발행안함,\r\n' +
+      'r4,2호점,2026-11-26,09:00,11:00,박영희,010-9999-0000,30000,카드결제,\r\n';
+    const res = await call('resource=import&table=payments', { method: 'POST', body: { csv: csv } });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.written, 4);
+
+    assert.equal(customerPosts.length, 1, '신규 고객 등록은 한 요청');
+    assert.deepEqual(customerPosts[0], [
+      { name: '이철', phone: '010-7777-8888' },
+      { name: '박영희', phone: '010-9999-0000' }
+    ]);
+    assert.equal(paymentPosts.length, 1);
+    assert.deepEqual(paymentPosts[0].map(function (r) { return r.customer_id; }),
+      ['c1', 'new-a', 'new-a', 'new-b']);
+    assert.equal(new URL(calls[calls.length - 1].url).searchParams.get('on_conflict'), 'pay_key');
+  } finally {
+    calls.restore();
+    clearEnv();
+  }
+});
+
 test('세금계산서 CSV: 홈택스 60칸 양식과 공급가액/세액 계산', async function () {
   setEnv();
   const calls = mockFetch(function () {

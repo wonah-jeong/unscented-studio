@@ -4,6 +4,9 @@
 //   영문 헤더(book_key, store, ...)를 함께 받아들인다.
 // - 예약·결제는 예약키(book_key/pay_key)로 upsert → 같은 파일을 두 번 올려도 중복이 쌓이지 않는다.
 // - 고객은 연락처(숫자만 비교) 또는 이름으로 기존 고객을 찾아 갱신한다.
+// - 고객·결제 가져오기는 행마다 요청을 보내지 않는다. 신규 고객은 200건씩 배치 insert,
+//   기존 고객 갱신은 값이 실제로 바뀐 건만 15건씩 동시에 patch 한다. (Netlify Function
+//   10초 제한 — 수백 건을 1건씩 순차 저장하면 타임아웃)
 // - 지출은 자연키가 없어 (날짜·항목·금액·지점)이 같은 행이 이미 있으면 건너뛴다.
 
 import { parseCsv, rowsToObjects, normalizeHeader } from './csv.js';
@@ -270,11 +273,49 @@ function chunk(arr, size) {
   return out;
 }
 
+const CUSTOMER_FIELDS = ['name', 'phone', 'biz_no', 'biz_name', 'biz_owner', 'email', 'note'];
+
+// 기존 고객을 갱신할지 판단하려면 비교할 값까지 읽어야 한다(예전에는 id·name·phone 만 읽었다).
 async function loadCustomers(cfg) {
-  const res = await sbSelectAll(cfg, 'customers', { select: 'id,name,phone' });
+  const res = await sbSelectAll(cfg, 'customers', {
+    select: 'id,name,phone,biz_no,biz_name,biz_owner,email,note'
+  });
   if (!res.ok) throw new ImportError('고객 목록을 읽지 못했어요: ' + (res.error && res.error.message));
   return res.data || [];
 }
+
+function nameKey(v) { return String(v == null ? '' : v).trim(); }
+
+/** 고객 한 건을 기존 고객 캐시에 넣는다(연락처는 숫자만, 이름은 앞뒤 공백 제거). */
+function indexCustomer(byPhone, byName, row) {
+  if (!row) return;
+  const ph = digits(row.phone);
+  if (ph) byPhone[ph] = row;
+  const nm = nameKey(row.name);
+  if (nm && !byName[nm]) byName[nm] = row;
+}
+
+/** 연락처·사업자등록번호는 숫자만 비교한다(형식만 다른 값은 같은 값으로 본다). */
+function sameCustomerValue(field, a, b) {
+  if (field === 'phone' || field === 'biz_no') return digits(a) === digits(b);
+  return nameKey(a) === nameKey(b);
+}
+
+/**
+ * 기존 고객과 비교해 실제로 바뀌는 칸만 골라낸다.
+ * CSV 의 빈 칸은 기존 값을 지우지 않는다(가져오기 화면의 기존 동작).
+ */
+function customerChanges(hit, rec) {
+  const patch = {};
+  CUSTOMER_FIELDS.forEach(function (k) {
+    if (!rec[k]) return;
+    if (sameCustomerValue(k, rec[k], hit[k])) return;
+    patch[k] = rec[k];
+  });
+  return patch;
+}
+
+const PATCH_CONCURRENCY = 15;
 
 /**
  * 표 하나를 실제로 가져온다.
@@ -303,33 +344,55 @@ export async function applyImport(cfg, table, csvText) {
     const existing = await loadCustomers(cfg);
     const byPhone = {};
     const byName = {};
-    existing.forEach(function (c) {
-      const ph = digits(c.phone);
-      if (ph) byPhone[ph] = c;
-      if (c.name) byName[String(c.name).trim()] = byName[String(c.name).trim()] || c;
-    });
+    existing.forEach(function (c) { indexCustomer(byPhone, byName, c); });
+
+    // 같은 파일 안의 같은 고객은 한 건으로 합친다 — 연락처가 있으면 연락처, 없으면 이름 기준.
+    const merged = [];
+    const seenKeys = {};
     for (const rec of records) {
       const ph = digits(rec.phone);
-      const hit = (ph && byPhone[ph]) || (!ph && rec.name && byName[rec.name]) || null;
-      if (hit) {
-        const patch = {};
-        ['name', 'phone', 'biz_no', 'biz_name', 'biz_owner', 'email', 'note'].forEach(function (k) {
-          if (rec[k]) patch[k] = rec[k];
-        });
-        const res = await sbPatch(cfg, 'customers', [['id', 'eq', hit.id]], patch);
+      const key = ph ? 'p:' + ph : 'n:' + nameKey(rec.name);
+      const prev = seenKeys[key];
+      if (prev) {
+        // 뒤에 나온 줄의 값이 있으면 채운다.
+        CUSTOMER_FIELDS.forEach(function (k) { if (rec[k]) prev[k] = rec[k]; });
+        result.skipped += 1;
+        continue;
+      }
+      const copy = {};
+      CUSTOMER_FIELDS.forEach(function (k) { copy[k] = rec[k]; });
+      seenKeys[key] = copy;
+      merged.push(copy);
+    }
+
+    const toInsert = [];
+    const toPatch = [];
+    merged.forEach(function (rec) {
+      const ph = digits(rec.phone);
+      const hit = (ph && byPhone[ph]) || (!ph && rec.name && byName[nameKey(rec.name)]) || null;
+      if (!hit) { toInsert.push(rec); return; }
+      const patch = customerChanges(hit, rec);
+      if (!Object.keys(patch).length) { result.skipped += 1; return; }
+      toPatch.push({ id: hit.id, patch: patch });
+    });
+
+    // 신규 고객은 200건씩 한 요청으로 넣는다.
+    for (const part of chunk(toInsert, 200)) {
+      const res = await sbInsert(cfg, 'customers', part);
+      if (!res.ok) throw new ImportError('고객 저장 실패: ' + (res.error && res.error.message));
+      result.inserted += part.length;
+    }
+
+    // 기존 고객 수정은 서로 독립이라 15건씩 동시에 보낸다.
+    for (const part of chunk(toPatch, PATCH_CONCURRENCY)) {
+      await Promise.all(part.map(async function (item) {
+        const res = await sbPatch(cfg, 'customers', [['id', 'eq', item.id]], item.patch);
         if (!res.ok) throw new ImportError('고객 수정 실패: ' + (res.error && res.error.message));
         result.updated += 1;
-        if (ph) byPhone[ph] = hit;
-      } else {
-        const res = await sbInsert(cfg, 'customers', [rec]);
-        if (!res.ok) throw new ImportError('고객 저장 실패: ' + (res.error && res.error.message));
-        const row = (res.data || [])[0] || {};
-        if (ph) byPhone[ph] = row;
-        if (rec.name) byName[rec.name] = byName[rec.name] || row;
-        result.inserted += 1;
-      }
-      result.written += 1;
+      }));
     }
+
+    result.written = result.inserted + result.updated;
     return result;
   }
 
@@ -337,28 +400,53 @@ export async function applyImport(cfg, table, csvText) {
     const customers = await loadCustomers(cfg);
     const byPhone = {};
     const byName = {};
-    customers.forEach(function (c) {
-      const ph = digits(c.phone);
-      if (ph) byPhone[ph] = c;
-      if (c.name) byName[String(c.name).trim()] = byName[String(c.name).trim()] || c;
+    customers.forEach(function (c) { indexCustomer(byPhone, byName, c); });
+
+    // 1) 이 파일에서 새로 등록해야 할 고객을 중복 없이 모은다(행마다 1명씩 넣으면 타임아웃).
+    const needed = [];
+    const seenNeeded = {};
+    records.forEach(function (rec) {
+      const ph = digits(rec._customerPhone);
+      const nm = nameKey(rec._customerName);
+      if (!ph && !nm) return;
+      const hit = (ph && byPhone[ph]) || (nm && byName[nm]) || null;
+      if (hit) return;
+      const key = ph ? 'p:' + ph : 'n:' + nm;
+      if (seenNeeded[key]) return;
+      seenNeeded[key] = true;
+      needed.push({ name: nm || ('고객 ' + ph.slice(-4)), phone: rec._customerPhone || '', phoneDigits: ph });
     });
+
+    // 2) 신규 고객을 200건씩 배치로 등록하고, 돌아온 행을 연락처/이름으로 다시 찾을 수 있게 캐시에 넣는다.
+    for (const part of chunk(needed, 200)) {
+      const res = await sbInsert(cfg, 'customers', part.map(function (c) {
+        return { name: c.name, phone: c.phone };
+      }));
+      if (!res.ok) throw new ImportError('고객 자동 등록 실패: ' + (res.error && res.error.message));
+      const saved = res.data || [];
+      const savedByPhone = {};
+      const savedByName = {};
+      saved.forEach(function (row) {
+        const ph = digits(row && row.phone);
+        if (ph) savedByPhone[ph] = row;
+        const nm = nameKey(row && row.name);
+        if (nm && !savedByName[nm]) savedByName[nm] = row;
+      });
+      part.forEach(function (c, i) {
+        const row = (c.phoneDigits && savedByPhone[c.phoneDigits]) || savedByName[nameKey(c.name)] || saved[i] || null;
+        if (row && row.id) indexCustomer(byPhone, byName, row);
+      });
+    }
+
     const rows = [];
     for (const rec of records) {
       const ph = digits(rec._customerPhone);
-      let cust = (ph && byPhone[ph]) || (rec._customerName && byName[String(rec._customerName).trim()]) || null;
-      if (!cust && (rec._customerName || ph)) {
-        const created = await sbInsert(cfg, 'customers', [{
-          name: rec._customerName || ('고객 ' + ph.slice(-4)), phone: rec._customerPhone || ''
-        }]);
-        if (!created.ok) throw new ImportError('고객 자동 등록 실패: ' + (created.error && created.error.message));
-        cust = (created.data || [])[0] || null;
-        if (ph && cust) byPhone[ph] = cust;
-        if (cust && cust.name) byName[cust.name] = byName[cust.name] || cust;
-      }
+      const nm = nameKey(rec._customerName);
+      const cust = (ph && byPhone[ph]) || (nm && byName[nm]) || null;
       rows.push({
         pay_key: rec.pay_key, store: rec.store, date: rec.date,
         start_time: rec.start_time, end_time: rec.end_time,
-        customer_id: cust ? cust.id : null,
+        customer_id: cust && cust.id ? cust.id : null,
         amount: rec.amount, status: rec.status,
         biz_no: rec.biz_no, biz_name: rec.biz_name, biz_owner: rec.biz_owner, email: rec.email,
         paid: rec.paid, alt_phone: rec.alt_phone, sms: rec.sms, note: rec.note
