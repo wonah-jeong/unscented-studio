@@ -1,149 +1,45 @@
 // Netlify Function: GET /.netlify/functions/bookings
 //
-// Reads the "예약" (booking) table directly from Airtable's REST API — this is a
-// separate, lightweight table that unscented-clone.html's admin panel keeps in sync
-// on every add/edit/delete, independent of whether a customer/payment record exists
-// for that booking. It only ever returns public-safe data: name, last-4 phone
-// digits, party size, store, date, start/end time. Memo(특이사항) is admin-only and
-// is intentionally never requested from Airtable or included in this response.
+// 고객용 실시간 예약현황 API. Supabase 의 "bookings" 표에서 한국시간 기준
+// 어제부터의 예약만 읽어, 기존과 똑같은 형식으로 돌려준다.
 //
-// Requires one environment variable, set in the Netlify site's dashboard:
-//   AIRTABLE_TOKEN — a read-only Airtable Personal Access Token scoped to just this
-//                    base (or at minimum this table).
+//   { first: { "2026-11-24": [ { start:"12:00", end:"15:00", name:"이*아", phone4:"6687", party:"2" } ] },
+//     second: { ... } }
+//
+// - 이름은 항상 마스킹한다(첫 글자 + 가운데 글자, 나머지 '*').
+// - 메모(특이사항)는 관리자 전용이라 조회조차 하지 않는다.
+// - 종료시간이 24:00 을 넘는 예약(자정을 넘겨 이어짐)은 시작한 날과 다음날 양쪽에 표시한다.
+// - 지난 날짜 예약은 요청 시점 기준으로 자동으로 빠진다.
+//
+// 필요한 환경변수 (Netlify 사이트 > Environment variables)
+//   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
 
-const BASE_ID = 'appqaKTXKBotjTh1f';
-const TABLE_ID = 'tblWqZsUETGKNjuSX';
-const F = {
-  store: 'fldR3zSX3esQL5pMu',
-  date: 'fld0CwAcWCEz88x97',
-  start: 'fldXqLCyVwzpSQ8BJ',
-  end: 'fldqR7BGIvD8soGOT',
-  name: 'fld4BtLHAfFOUbFrS',
-  phone4: 'fldqnLZBMwfKmi8U1',
-  party: 'fldHA5JKS7ro9qHnL'
-};
-
-function fieldVal(v) {
-  return v && typeof v === 'object' && 'name' in v ? v.name : v;
-}
-
-// 고객용 응답으로 나가는 이름은 항상 마스킹한다 — 첫 글자와 가운데 글자만 남기고 나머지는 '*'.
-// 원본 이름은 이 함수를 거치지 않고는 응답에 절대 포함되지 않는다.
-function maskName(name) {
-  var s = String(name || '');
-  var chars = Array.from(s);
-  var n = chars.length;
-  if (n <= 2) return s;
-  var midIdx = Math.floor(n / 2);
-  return chars.map(function (ch, i) { return (i === 0 || i === midIdx) ? ch : '*'; }).join('');
-}
-
-// 한국 시간 기준 오늘 날짜(YYYY-MM-DD). 이 값보다 이전 날짜의 예약은
-// 고객용 응답에서 제외한다 — 지난 예약은 매일 자동으로 화면에서 빠진다.
-function todayIsoKST() {
-  var parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Seoul',
-    year: 'numeric', month: '2-digit', day: '2-digit'
-  }).formatToParts(new Date());
-  var map = {};
-  for (var i = 0; i < parts.length; i++) map[parts[i].type] = parts[i].value;
-  return map.year + '-' + map.month + '-' + map.day;
-}
-
-// 종료시간 표기: 자정 종료는 "24:00", 다음날까지 이어지면 24를 더해 저장된다(예: 다음날 01:00 → "25:00").
-function timeToMin(t) {
-  var p = String(t || '').split(':');
-  var h = parseInt(p[0], 10), m = parseInt(p[1], 10);
-  return (isNaN(h) ? 0 : h * 60) + (isNaN(m) ? 0 : m);
-}
-function minToTime(mins) {
-  var h = Math.floor(mins / 60), m = mins % 60;
-  return (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m;
-}
-function nextIso(iso) {
-  var p = iso.split('-').map(Number);
-  var d = new Date(Date.UTC(p[0], p[1] - 1, p[2] + 1));
-  return d.toISOString().slice(0, 10);
-}
-
-async function fetchAllRecords(token) {
-  var records = [];
-  var offset;
-  do {
-    var url = 'https://api.airtable.com/v0/' + BASE_ID + '/' + TABLE_ID +
-      '?pageSize=100&returnFieldsByFieldId=true&fields[]=' + Object.values(F).join('&fields[]=') +
-      (offset ? '&offset=' + offset : '');
-    var res = await fetch(url, { headers: { Authorization: 'Bearer ' + token } });
-    if (!res.ok) {
-      var body = await res.text().catch(function () { return ''; });
-      throw new Error('Airtable ' + res.status + ': ' + body.slice(0, 300));
-    }
-    var json = await res.json();
-    records = records.concat(json.records || []);
-    offset = json.offset;
-  } while (offset);
-  return records;
-}
+import { json, notConfigured } from '../lib/http.js';
+import { supabaseConfig, sbSelectAll } from '../lib/supabase.js';
+import { buildPublicView, todayIsoKst, yesterdayIsoKst } from '../lib/booking-view.js';
 
 export default async (req) => {
-  const token = process.env.AIRTABLE_TOKEN;
-  if (!token) {
-    return new Response(JSON.stringify({ error: 'not_configured' }), {
-      status: 500,
-      headers: { 'content-type': 'application/json' }
-    });
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    return json({ error: 'method_not_allowed' }, 405, { allow: 'GET' });
   }
 
+  const cfg = supabaseConfig();
+  if (!cfg.ok) return notConfigured(cfg.missing, '고객용 예약현황 API');
+
+  const today = todayIsoKst();
+  const from = yesterdayIsoKst(); // 어제 시작해서 자정을 넘긴 예약까지 오늘로 이어 보이게 하려면 어제부터 읽어야 한다
+
   try {
-    const records = await fetchAllRecords(token);
-    const today = todayIsoKST();
-    const out = { first: {}, second: {} };
-    for (const rec of records) {
-      const f = rec.fields || {};
-      const storeName = fieldVal(f[F.store]);
-      const storeKey = storeName === '1호점' ? 'first' : storeName === '2호점' ? 'second' : null;
-      const iso = f[F.date];
-      if (!storeKey || !iso) continue;
-      const base = {
-        name: maskName(f[F.name] || ''),
-        phone4: f[F.phone4] || '',
-        party: f[F.party] || ''
-      };
-      const endMin = timeToMin(f[F.end]);
-      const overnight = endMin > 1440; // 다음날 새벽까지 이어지는 예약
-      // 시작한 날: "23:00-01:00"처럼 표시
-      if (iso >= today) { // 지난 날짜는 매번 요청 시점 기준으로 자동 제외
-        if (!out[storeKey][iso]) out[storeKey][iso] = [];
-        out[storeKey][iso].push(Object.assign({
-          start: f[F.start] || '',
-          end: overnight ? minToTime(endMin - 1440) : (f[F.end] || '')
-        }, base));
-      }
-      // 다음날: 새벽 시간도 예약된 시간으로 표시 ("00:00-01:00")
-      if (overnight) {
-        const next = nextIso(iso);
-        if (next >= today) {
-          if (!out[storeKey][next]) out[storeKey][next] = [];
-          out[storeKey][next].push(Object.assign({ start: '00:00', end: minToTime(endMin - 1440) }, base));
-        }
-      }
-    }
-    for (const storeKey of ['first', 'second']) {
-      for (const iso of Object.keys(out[storeKey])) {
-        out[storeKey][iso].sort((a, b) => (a.start < b.start ? -1 : 1));
-      }
-    }
-    return new Response(JSON.stringify(out), {
-      status: 200,
-      headers: {
-        'content-type': 'application/json',
-        'cache-control': 'public, max-age=30'
-      }
+    const res = await sbSelectAll(cfg, 'bookings', {
+      select: 'store,date,start_time,end_time,name,phone4,party',
+      filters: [['date', 'gte', from]],
+      order: 'date.asc,start_time.asc'
     });
+    if (!res.ok) {
+      return json({ error: 'fetch_failed', message: res.error && res.error.message ? res.error.message : 'Supabase 조회 실패' }, 502);
+    }
+    return json(buildPublicView(res.data || [], today), 200, { 'cache-control': 'public, max-age=30' });
   } catch (err) {
-    return new Response(JSON.stringify({ error: 'fetch_failed', message: String(err && err.message || err) }), {
-      status: 502,
-      headers: { 'content-type': 'application/json' }
-    });
+    return json({ error: 'fetch_failed', message: String(err && err.message ? err.message : err) }, 502);
   }
 };

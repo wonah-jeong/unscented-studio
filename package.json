@@ -1,0 +1,14 @@
+{
+  "name": "unscented-studio",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Unscented 렌탈스튜디오 — 정적 사이트 + Netlify Functions(Supabase, 전용 관리자 /admin)",
+  "scripts": {
+    "test": "node --test tests/",
+    "serve": "node tests/serve.js 4173"
+  },
+  "devDependencies": {
+    "jsdom": "^27.0.0"
+  }
+}
