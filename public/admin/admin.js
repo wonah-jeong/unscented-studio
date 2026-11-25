@@ -333,24 +333,28 @@
     return parseInt(p[1], 10) + '월 ' + parseInt(p[2], 10) + '일';
   }
 
-  // 창(.sheet) 바깥의 어두운 배경을 누르면 닫는다.
-  // - 창 안쪽을 누른 것은 버블링으로 올라와도 무시한다.
-  // - 창 안에서 드래그/선택하다가 배경에서 손을 떼면 click 대상이 배경이 되므로,
-  //   누르기 시작한 곳(mousedown/touchstart)도 함께 확인해 그때는 닫지 않는다.
-  function inSheet(node) {
-    return !!(node && node.closest && node.closest('.sheet'));
-  }
+  // 창(.backdrop) 바깥 배경을 누르면 닫는다. 배경의 자식은 창(.sheet) 하나뿐이다.
+  // 판단은 '누른 곳/click 대상이 배경 그 자체(e.target === backdrop)' 인지로만 한다.
+  // closest()/contains() 로 '창 안이냐'를 보면, 클릭 처리 중 스스로 DOM 에서 빠지는 요소
+  // (예: 고객 검색 결과 버튼 — 클릭하면 결과 목록이 비워진다)가 떨어진 뒤 버블링될 때
+  // '창 밖'으로 잘못 판정되어 창이 닫힌다. 떨어진 노드는 조상이 없어 어떤 방식으로도
+  // 창 안이었음을 알 수 없으므로, 배경 자체를 눌렀는지만 본다.
+  // - 창 안에서 드래그/선택하다가 배경에서 손을 뗀 경우(click 대상이 배경이 됨)는
+  //   누르기 시작한 곳(mousedown/touchstart)이 배경이 아니므로 닫지 않는다.
   function onBackdropClick(backdrop, close) {
     if (!backdrop) return;
-    var pressTarget = null;
-    backdrop.addEventListener('mousedown', function (e) { pressTarget = e.target; });
+    var pressedOnBackdrop = false;
+    backdrop.addEventListener('mousedown', function (e) {
+      pressedOnBackdrop = (e.target === backdrop);
+    });
     backdrop.addEventListener('touchstart', function (e) {
-      pressTarget = (e.touches && e.touches[0]) ? e.touches[0].target : e.target;
+      var t = (e.touches && e.touches[0]) ? e.touches[0].target : e.target;
+      pressedOnBackdrop = (t === backdrop);
     }, { passive: true });
     backdrop.addEventListener('click', function (e) {
-      var startedIn = pressTarget;
-      pressTarget = null;
-      if (inSheet(startedIn) || inSheet(e.target)) return;   // 창 안에서 시작한 클릭
+      var startedOnBackdrop = pressedOnBackdrop;
+      pressedOnBackdrop = false;
+      if (!startedOnBackdrop || e.target !== backdrop) return;
       close();
     });
   }

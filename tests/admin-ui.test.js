@@ -351,6 +351,39 @@ test('/admin: 예약창 바깥 어두운 배경을 누르면 닫히고, 창 안�
   page.dom.window.close();
 });
 
+test('/admin: 고객 검색 결과를 눌러도 예약창은 닫히지 않고 그 고객이 선택된다', { skip: skip }, async function () {
+  const page = await makePage({
+    bookings: [],
+    customers: [{ id: 'c1', name: '김수현', phone: '010-1234-5678' }]
+  });
+  const doc = await loginAndOpenToday(page);
+  const modal = doc.getElementById('dayModal');
+  assert.equal(modal.classList.contains('open'), true, '날짜를 누르면 예약창이 열린다');
+
+  doc.getElementById('custSearchInput').value = '김';
+  doc.getElementById('custSearchBtn').dispatchEvent(new page.window.MouseEvent('click', { bubbles: true }));
+  await flush(40);
+
+  const btn = doc.querySelector('.cust-result-btn');
+  assert.ok(btn, '검색 결과 버튼이 떠야 한다');
+  // 실제 화면과 같게: 결과 버튼을 누르면 그 버튼의 클릭 처리 안에서 결과 목록이 비워져
+  // 버튼이 DOM 에서 떨어져 나간 뒤에도 click 이벤트는 배경까지 버블링된다.
+  btn.dispatchEvent(new page.window.MouseEvent('mousedown', { bubbles: true }));
+  btn.dispatchEvent(new page.window.MouseEvent('click', { bubbles: true }));
+  await flush(20);
+
+  assert.equal(modal.classList.contains('open'), true, '고객을 골라도 예약창이 닫히면 안 된다');
+  assert.match(doc.getElementById('custSelected').textContent, /김수현/);
+  assert.equal(doc.getElementById('addEntryForm').elements.name.value, '김수현');
+
+  // 배경을 누르면 닫히는 기능은 그대로 동작해야 한다
+  clickOn(page.window, modal);
+  await flush(10);
+  assert.equal(modal.classList.contains('open'), false, '배경을 누르면 닫혀야 한다');
+  assert.equal(page.errors.length, 0, page.errors.join(' | '));
+  page.dom.window.close();
+});
+
 test('/admin: 세금계산서 창도 바깥 배경을 누르면 닫힌다', { skip: skip }, async function () {
   const page = await makePage({});
   const doc = await loginAndOpenToday(page);
