@@ -108,11 +108,14 @@ main{max-width:760px;margin:0 auto;padding:16px 14px 60px;}
 /* ------------------------------ 모달 ------------------------------ */
 .backdrop{
   position:fixed;inset:0;z-index:100;display:none;align-items:flex-end;justify-content:center;
-  background:rgba(28,26,22,.42);padding:0;
+  background:rgba(28,26,22,.42);
+  /* 창 위쪽에 어두운 빈 공간을 늘 남겨 둔다 — 여기를 누르면 창이 닫힌다.
+     (vh 는 아이폰 사파리에서 실제 화면보다 커서, 창이 화면을 다 덮어 누를 곳이 없어졌음) */
+  padding:56px 0 0;
 }
 .backdrop.open{display:flex;}
 .sheet{
-  width:100%;max-width:640px;max-height:92vh;overflow-y:auto;background:var(--bg);
+  width:100%;max-width:640px;max-height:100%;overflow-y:auto;background:var(--bg);
   border-radius:12px 12px 0 0;padding:16px 16px 26px;
 }
 @media(min-width:700px){

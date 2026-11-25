@@ -306,6 +306,71 @@ test('/admin: 데이터 탭에서 내보내기·가져오기 UI 가 보인다', 
   page.dom.window.close();
 });
 
+async function loginAndOpenToday(page) {
+  const doc = page.window.document;
+  doc.getElementById('loginPassword').value = 'pw';
+  doc.getElementById('loginForm').dispatchEvent(new page.window.Event('submit', { bubbles: true, cancelable: true }));
+  await flush(40);
+  doc.querySelector('.cal-cell.today').dispatchEvent(new page.window.MouseEvent('click', { bubbles: true }));
+  await flush(40);
+  return doc;
+}
+
+function clickOn(win, el) {
+  el.dispatchEvent(new win.MouseEvent('mousedown', { bubbles: true }));
+  el.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+}
+
+test('/admin: 예약창 바깥 어두운 배경을 누르면 닫히고, 창 안을 누르면 닫히지 않는다', { skip: skip }, async function () {
+  const page = await makePage({
+    bookings: [
+      { id: 'b1', book_key: 'r1', store: '1호점', date: TODAY_ISO, start_time: '13:00', end_time: '15:00', name: '김수현', phone4: '1234', party: '2', note: '' }
+    ]
+  });
+  const doc = await loginAndOpenToday(page);
+  const modal = doc.getElementById('dayModal');
+  const sheet = modal.querySelector('.sheet');
+  assert.equal(modal.classList.contains('open'), true, '날짜를 누르면 예약창이 열린다');
+
+  // 창 안쪽(시트)을 누르면 이벤트가 배경까지 올라가도 닫히지 않는다
+  clickOn(page.window, sheet.querySelector('.sheet-sub'));
+  await flush(10);
+  assert.equal(modal.classList.contains('open'), true, '창 안을 눌러서는 닫히면 안 된다');
+
+  // 창 안에서 드래그/선택하다가 배경에서 손을 뗀 경우(click 대상이 배경)도 닫히지 않는다
+  doc.getElementById('modalList').dispatchEvent(new page.window.MouseEvent('mousedown', { bubbles: true }));
+  modal.dispatchEvent(new page.window.MouseEvent('click', { bubbles: true }));
+  await flush(10);
+  assert.equal(modal.classList.contains('open'), true, '드래그 끝 클릭으로는 닫히면 안 된다');
+
+  // 바깥 배경을 누르면 닫힌다
+  clickOn(page.window, modal);
+  await flush(10);
+  assert.equal(modal.classList.contains('open'), false, '배경을 누르면 닫혀야 한다');
+  assert.equal(page.errors.length, 0, page.errors.join(' | '));
+  page.dom.window.close();
+});
+
+test('/admin: 세금계산서 창도 바깥 배경을 누르면 닫힌다', { skip: skip }, async function () {
+  const page = await makePage({});
+  const doc = await loginAndOpenToday(page);
+  const modal = doc.getElementById('taxModal');
+
+  doc.getElementById('taxOpenBtn').dispatchEvent(new page.window.MouseEvent('click', { bubbles: true }));
+  await flush(10);
+  assert.equal(modal.classList.contains('open'), true, '세금계산서 창이 열린다');
+
+  clickOn(page.window, modal.querySelector('.sheet'));
+  await flush(10);
+  assert.equal(modal.classList.contains('open'), true, '창 안을 눌러서는 닫히면 안 된다');
+
+  clickOn(page.window, modal);
+  await flush(10);
+  assert.equal(modal.classList.contains('open'), false, '배경을 누르면 닫혀야 한다');
+  assert.equal(page.errors.length, 0, page.errors.join(' | '));
+  page.dom.window.close();
+});
+
 test('/admin: HTML 안에서 참조하는 id 가 모두 존재하고 중복이 없다', { skip: skip }, async function () {
   const html = await readFile(path.join(ROOT, 'public/admin/index.html'), 'utf8');
   const js = await readFile(path.join(ROOT, 'public/admin/admin.js'), 'utf8');

@@ -333,13 +333,35 @@
     return parseInt(p[1], 10) + '월 ' + parseInt(p[2], 10) + '일';
   }
 
+  // 창(.sheet) 바깥의 어두운 배경을 누르면 닫는다.
+  // - 창 안쪽을 누른 것은 버블링으로 올라와도 무시한다.
+  // - 창 안에서 드래그/선택하다가 배경에서 손을 떼면 click 대상이 배경이 되므로,
+  //   누르기 시작한 곳(mousedown/touchstart)도 함께 확인해 그때는 닫지 않는다.
+  function inSheet(node) {
+    return !!(node && node.closest && node.closest('.sheet'));
+  }
+  function onBackdropClick(backdrop, close) {
+    if (!backdrop) return;
+    var pressTarget = null;
+    backdrop.addEventListener('mousedown', function (e) { pressTarget = e.target; });
+    backdrop.addEventListener('touchstart', function (e) {
+      pressTarget = (e.touches && e.touches[0]) ? e.touches[0].target : e.target;
+    }, { passive: true });
+    backdrop.addEventListener('click', function (e) {
+      var startedIn = pressTarget;
+      pressTarget = null;
+      if (inSheet(startedIn) || inSheet(e.target)) return;   // 창 안에서 시작한 클릭
+      close();
+    });
+  }
+
   function closeDay() {
     $('dayModal').classList.remove('open');
     state.modalIso = null;
     state.editingKey = null;
   }
   $('modalClose').addEventListener('click', closeDay);
-  $('dayModal').addEventListener('click', function (e) { if (e.target.id === 'dayModal') closeDay(); });
+  onBackdropClick($('dayModal'), closeDay);
   document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape' && $('dayModal').classList.contains('open')) closeDay();
   });
@@ -1340,9 +1362,7 @@
   }
   $('taxOpenBtn').addEventListener('click', openTax);
   $('taxModalClose').addEventListener('click', function () { $('taxModal').classList.remove('open'); });
-  $('taxModal').addEventListener('click', function (e) {
-    if (e.target.id === 'taxModal') $('taxModal').classList.remove('open');
-  });
+  onBackdropClick($('taxModal'), function () { $('taxModal').classList.remove('open'); });
   $('taxRunBtn').addEventListener('click', async function () {
     var from = $('taxFrom').value, to = $('taxTo').value;
     var status = $('taxStatus');
