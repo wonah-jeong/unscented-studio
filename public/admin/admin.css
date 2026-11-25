@@ -16,8 +16,10 @@ body{
   font:14px/1.6 'Nanum Gothic','Apple SD Gothic Neo',-apple-system,BlinkMacSystemFont,sans-serif;
   -webkit-font-smoothing:antialiased;
 }
-button,input,select{font-family:inherit;font-size:14px;}
-button{cursor:pointer;}
+button{font-family:inherit;font-size:14px;cursor:pointer;}
+/* iOS Safari는 입력칸 글자가 16px보다 작으면 포커스할 때 화면을 저절로 확대한다.
+   입력 요소는 16px을 기본으로 두고, 줄 간격을 1.4로 맞춰 기존(14px × 1.6)과 같은 높이를 유지한다. */
+input,select,textarea{font-family:inherit;font-size:16px;line-height:1.4;}
 a{color:inherit;}
 [hidden]{display:none !important;}
 
